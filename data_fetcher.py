@@ -2,13 +2,13 @@
 import numpy as np
 import pandas as pd
 import tushare as ts
-from sqlalchemy import create_engine
 
 from stock_indicator import indicator
 from constants import KType
 import data_store
 import entity
 import log
+import utils
 
 
 INIT_DATE_DAY = '2018-01-01'
@@ -51,64 +51,32 @@ def get_stock_basics():
     """
     df = ts.get_stock_basics()
     df.reset_index(inplace=True)  # stock code is used as index, reset it
-    df.to_csv("out__.csv")
-
+    print(df.columns)
     size = df.iloc[:, 0].size
 
     if size == 0:
         return
 
-    data_array = np.array(df)
-
-    for i in range(0, size):
-        data = data_array[i]
-        stock_basics = entity.StockBasics()
-        stock_basics.code = data[0]
-        stock_basics.name = data[1]
-        stock_basics.industry = data[2]
-        stock_basics.area = data[3]
-        stock_basics.pe = data[4]
-        stock_basics.outstanding = data[5]
-        stock_basics.totals = data[6]
-        stock_basics.totalAssets = data[7]
-        stock_basics.liquidAssets = data[8]
-        stock_basics.fixedAssets = data[9]
-        stock_basics.reserved = data[10]
-        stock_basics.reservedPerShare = data[11]
-        stock_basics.esp = data[12]
-        stock_basics.bvps = data[13]
-        stock_basics.pb = data[14]
-        stock_basics.timeToMarket = data[15]
-        stock_basics.undp = data[16]
-        stock_basics.perundp = data[17]
-        stock_basics.rev = data[18]
-        stock_basics.profit = data[19]
-        stock_basics.gpr = data[20]
-        stock_basics.npr = data[21]
-        stock_basics.holders = data[22]
-        stock_basics.stockType = get_stock_type(data[0])
-
-        stock_basics.version = 0
-        data_store.insert(stock_basics)
-
     # add stock type: Shanghai or Shenzhen
     for i in range(len(df.index)):
         if df.iloc[i, 0].startswith("6"):
-            df.loc[i, 'type'] = 'sh_A'
+            df.loc[i, 'stock_type'] = 'sh_A'
         elif df.iloc[i, 0].startswith("00"):
-            df.loc[i, 'type'] = 'sz_A'
+            df.loc[i, 'stock_type'] = 'sz_A'
         elif df.iloc[i, 0].startswith("6016"):
-            df.loc[i, 'type'] = 'sh_bluechip'
+            df.loc[i, 'stock_type'] = 'sh_bluechip'
         elif df.iloc[i, 0].startswith("900"):
-            df.loc[i, 'type'] = 'sh_B'
+            df.loc[i, 'stock_type'] = 'sh_B'
         elif df.iloc[i, 0].startswith("002"):
-            df.loc[i, 'type'] = 'zxb'
+            df.loc[i, 'stock_type'] = 'zxb'
         elif df.iloc[i, 0].startswith("200"):
-            df.loc[i, 'type'] = 'sz_B'
+            df.loc[i, 'stock_type'] = 'sz_B'
         elif df.iloc[i, 0].startswith("300"):
-            df.loc[i, 'type'] = 'cyb'
+            df.loc[i, 'stock_type'] = 'cyb'
         else:
-            df.loc[i, 'type'] = 'other'
+            df.loc[i, 'stock_type'] = 'other'
+
+    df.to_sql(name='STORK_BASICS', index=False, con=data_store.engine, if_exists='append')
 
 
 def choose_hist_table(ktype):
@@ -167,9 +135,14 @@ def handle_day_k(start_date, stock_code, history_dot):
     5. 更新数据库，发送邮件
     :return:
     """
+
     df = ts.get_hist_data(code=stock_code, start=start_date, ktype=KType.day.value)
-    df['stock_code'] = stock_code
     df.reset_index(inplace=True)
+
+    df['stock_code'] = stock_code
+    df['date_in'] = df['date'].astype('datetime64[ns]')
+    df['date'] = df['date_in']
+    df['day_in'] = df['date_in']
 
     if df.empty:
         return
@@ -183,14 +156,11 @@ def handle_day_k(start_date, stock_code, history_dot):
     for column_str in df.columns.values.tolist():
         new_df[column_str] = df[column_str]
     new_df = new_df.replace([np.inf, -np.inf, np.nan], 0)
-    out('new_df.csv', new_df)
-    out('recent_df.csv', recent_df)
     new_df = new_df.append(recent_df)
-    out('append.csv', new_df)
     indicator(new_df)
 
     new_df = new_df[new_df['date'] == start_date]
-    # new_df = new_df.replace([np.inf, -np.inf, np.nan], 0)
+    new_df = new_df.replace([np.inf, -np.inf, np.nan], 0)
     new_df.to_sql(name='HIST_DATA_D', index=False, con=data_store.engine, if_exists='append')
 
 
@@ -204,9 +174,13 @@ def handle_sixty_minute_k(start_date, stock_code, history_dot):
     5. 更新数据库，发送邮件
     :return:
     """
-    df = ts.get_hist_data(code=stock_code, start=start_date, ktype=KType.day.value)
-    df['stock_code'] = stock_code
+    df = ts.get_hist_data(code=stock_code, start=start_date, ktype=KType.sixtyMinute.value)
     df.reset_index(inplace=True)
+
+    df['stock_code'] = stock_code
+    df['date_in'] = df['date'].astype('datetime64[ns]')
+    df['date'] = df['date_in']
+    df['day_in'] = df['date_in']
 
     if df.empty:
         return
@@ -220,14 +194,50 @@ def handle_sixty_minute_k(start_date, stock_code, history_dot):
     for column_str in df.columns.values.tolist():
         new_df[column_str] = df[column_str]
     new_df = new_df.replace([np.inf, -np.inf, np.nan], 0)
-    out('new_df.csv', new_df)
-    out('recent_df.csv', recent_df)
     new_df = new_df.append(recent_df)
-    out('append.csv', new_df)
     indicator(new_df)
 
     new_df = new_df[new_df['date'] == start_date]
+    new_df = new_df.replace([np.inf, -np.inf, np.nan], 0)
     new_df.to_sql(name='HIST_DATA_60', index=False, con=data_store.engine, if_exists='append')
+
+
+def handle_day_w(start_date, stock_code, history_dot):
+    """
+    日K
+    1. 取出历史数据
+    2. 拉取新数据
+    3. 计算指标
+    4. 做决策
+    5. 更新数据库，发送邮件
+    :return:
+    """
+    df = ts.get_hist_data(code=stock_code, start=start_date, ktype=KType.week.value)
+    df.reset_index(inplace=True)
+
+    df['stock_code'] = stock_code
+    df['date_in'] = df['date'].astype('datetime64[ns]')
+    df['date'] = df['date_in']
+    df['day_in'] = df['date_in']
+
+    if df.empty:
+        return
+
+    recent_df = data_store.query_hist_data_w(stock_code=stock_code, older=history_dot)
+    recent_df.columns = recent_df.columns.str.lower()
+
+    new_df = pd.DataFrame(columns=recent_df.columns)
+    print(recent_df.columns)
+    print(df.columns.values.tolist())
+    for column_str in df.columns.values.tolist():
+        new_df[column_str] = df[column_str]
+    new_df = new_df.replace([np.inf, -np.inf, np.nan], 0)
+    new_df = new_df.append(recent_df)
+    indicator(new_df)
+
+    new_df = new_df[new_df['date'] == start_date]
+    new_df = new_df.replace([np.inf, -np.inf, np.nan], 0)
+    new_df.to_sql(name='HIST_DATA_W', index=False, con=data_store.engine, if_exists='append')
 
 
 def get_hist_data(code, ktype, start=None, end=None):
@@ -264,4 +274,4 @@ def get_hist_data(code, ktype, start=None, end=None):
 
 
 if __name__ == '__main__':
-    handle_day_k('2018-05-18', '600198', 60)
+    get_stock_basics()

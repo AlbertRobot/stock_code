@@ -5,6 +5,10 @@ def date2str(date, fmt):
     return date.strftime(fmt)
 
 
+def trans_date(date_str):
+    return date2str(datetime.strptime(date_str, "%Y-%m-%d"), '%Y-%m-%d %H:%M:%S')
+
+
 def current_date():
     return datetime.now().strftime('%Y-%m-%d')
 
